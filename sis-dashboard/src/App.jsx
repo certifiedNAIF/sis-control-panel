@@ -116,6 +116,75 @@ const DEFAULT_SERVER_DATA = {
 const ServerDataContext = createContext(DEFAULT_SERVER_DATA);
 const useServerData = () => useContext(ServerDataContext);
 
+// ── API HELPERS ──────────────────────────────────────────────────────────────
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guildId: GUILD_ID, ...body }),
+  });
+  if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
+  return res.json();
+}
+
+// useApiConfig — loads config from API on mount, returns [config, setConfig, save, saving, toast]
+function useApiConfig(getPath, postPath, defaultConfig) {
+  const [config, setConfig]   = useState(defaultConfig);
+  const [unsaved, setUnsaved] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [toast, setToast]     = useState(null);  // { msg, ok }
+
+  useEffect(() => {
+    apiGet(`${getPath}?guildId=${GUILD_ID}`)
+      .then(data => setConfig(prev => ({ ...prev, ...data })))
+      .catch(err => console.warn(`[Config] ${getPath}:`, err.message));
+  }, [getPath]);
+
+  const markUnsaved = (updater) => {
+    setConfig(updater);
+    setUnsaved(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiPost(postPath, config);
+      setUnsaved(false);
+      setToast({ msg: "Saved successfully", ok: true });
+    } catch (err) {
+      setToast({ msg: `Save failed: ${err.message}`, ok: false });
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  return { config, setConfig: markUnsaved, unsaved, setUnsaved, save, saving, toast };
+}
+
+// Toast notification component
+function Toast({ toast }) {
+  if (!toast) return null;
+  return (
+    <div style={{
+      position: "fixed", top: 20, right: 20, zIndex: 999,
+      background: toast.ok ? "#052010" : "#2A0A0A",
+      border: `1px solid ${toast.ok ? "#22C55E" : "#EF4444"}`,
+      color: toast.ok ? "#22C55E" : "#EF4444",
+      borderRadius: 10, padding: "12px 20px", fontSize: 13, fontWeight: 500,
+      boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+    }}>
+      {toast.ok ? "✅" : "❌"} {toast.msg}
+    </div>
+  );
+}
+
 // ── EXACT colors from screenshots ──────────────────────────────────────────
 const C = {
   bg: "#0D0F13",
@@ -877,23 +946,40 @@ function Commands() {
 // PAGE: AUTO-MODERATION
 // ─────────────────────────────────────────────────────────────────────────────
 function AutoModeration() {
-  const [filters, setFilters] = useState({
-    badWords: false, repeatedText: false,
-    discordInvites: false, externalLinks: false,
-    excessiveCaps: false, excessiveSpoilers: false,
-    massMentions: false, antiSpam: true,
-  });
-  const toggle = k => setFilters(p => ({ ...p, [k]: !p[k] }));
+  const { config, setConfig, unsaved, setUnsaved, save, saving, toast } = useApiConfig(
+    "/api/automod", "/api/automod",
+    { bad_words: 0, repeated_text: 0, discord_invites: 0, external_links: 0,
+      excessive_caps: 0, excessive_spoilers: 0, mass_mentions: 0, anti_spam: 1 }
+  );
+
+  // Map DB snake_case → UI keys
+  const filters = {
+    badWords:         !!config.bad_words,
+    repeatedText:     !!config.repeated_text,
+    discordInvites:   !!config.discord_invites,
+    externalLinks:    !!config.external_links,
+    excessiveCaps:    !!config.excessive_caps,
+    excessiveSpoilers:!!config.excessive_spoilers,
+    massMentions:     !!config.mass_mentions,
+    antiSpam:         !!config.anti_spam,
+  };
+
+  const dbKey = { badWords:"bad_words", repeatedText:"repeated_text",
+    discordInvites:"discord_invites", externalLinks:"external_links",
+    excessiveCaps:"excessive_caps", excessiveSpoilers:"excessive_spoilers",
+    massMentions:"mass_mentions", antiSpam:"anti_spam" };
+
+  const toggle = k => setConfig(prev => ({ ...prev, [dbKey[k]]: prev[dbKey[k]] ? 0 : 1 }));
 
   const filterList = [
-    { key: "badWords", label: "Bad Words", desc: "Detects and filters profanity and custom blocked words", icon: "🚫" },
-    { key: "repeatedText", label: "Repeated Text", desc: "Detects repeated characters and limits excessive emoji usage", icon: "🔁" },
-    { key: "discordInvites", label: "Discord Invites", desc: "Blocks Discord invite links and codes", icon: "🔗" },
-    { key: "externalLinks", label: "External Links", desc: "Filters external website links and URLs", icon: "🌐" },
-    { key: "excessiveCaps", label: "Excessive Caps", desc: "Moderates messages with excessive uppercase letters", icon: "🔠" },
+    { key: "badWords",          label: "Bad Words",          desc: "Detects and filters profanity and custom blocked words", icon: "🚫" },
+    { key: "repeatedText",      label: "Repeated Text",      desc: "Detects repeated characters and limits excessive emoji usage", icon: "🔁" },
+    { key: "discordInvites",    label: "Discord Invites",    desc: "Blocks Discord invite links and codes", icon: "🔗" },
+    { key: "externalLinks",     label: "External Links",     desc: "Filters external website links and URLs", icon: "🌐" },
+    { key: "excessiveCaps",     label: "Excessive Caps",     desc: "Moderates messages with excessive uppercase letters", icon: "🔠" },
     { key: "excessiveSpoilers", label: "Excessive Spoilers", desc: "Moderates excessive spoiler tag usage", icon: "📦" },
-    { key: "massMentions", label: "Mass Mentions", desc: "Prevents excessive user/role mentions in messages", icon: "📢" },
-    { key: "antiSpam", label: "Anti-Spam", desc: "Prevents rapid message flooding, link spam, and attachment spam", icon: "⚡" },
+    { key: "massMentions",      label: "Mass Mentions",      desc: "Prevents excessive user/role mentions in messages", icon: "📢" },
+    { key: "antiSpam",          label: "Anti-Spam",          desc: "Prevents rapid message flooding, link spam, and attachment spam", icon: "⚡" },
   ];
 
   const [noCommandsChannels] = useState([]);
@@ -1001,6 +1087,33 @@ function AutoModeration() {
         </select>
         <div style={{ fontSize: 11, color: C.gray4, marginTop: 6 }}>Leave empty to block all default command prefixes (/, !, #, +, $)</div>
       </div>
+
+      <Toast toast={toast} />
+      {unsaved && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 240, right: 0,
+          background: "#1A1C26", border: `1px solid ${C.border}`,
+          padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          zIndex: 50,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.premium }}>
+            <span>⚠</span> You have unsaved changes
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setUnsaved(false)} style={{
+              background: "transparent", border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: "8px 20px", color: C.gray1,
+              fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+            }}>Cancel</button>
+            <button onClick={save} disabled={saving} style={{
+              background: C.accent, border: "none",
+              borderRadius: 8, padding: "8px 20px", color: C.white,
+              fontSize: 13, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit",
+              opacity: saving ? 0.7 : 1,
+            }}>{saving ? "Saving…" : "Save Changes"}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1009,14 +1122,31 @@ function AutoModeration() {
 // PAGE: PROTECTION
 // ─────────────────────────────────────────────────────────────────────────────
 function Protection() {
-  const [dmOnPunishment, setDmOnPunishment] = useState(true);
-  const [activeTab, setActiveTab] = useState("General Protection");
-  const [protections, setProtections] = useState({
-    antiBan: false, antiKick: false, antiRole: false,
-    antiChannel: false, antiWebhook: false,
-  });
+  const { config, setConfig, unsaved, setUnsaved, save, saving, toast } = useApiConfig(
+    "/api/protection", "/api/protection",
+    { dm_on_punishment: 1, anti_ban: 0, anti_kick: 0, anti_role: 0,
+      anti_channel: 0, anti_webhook: 0, anti_role_create: 0, anti_role_delete: 0,
+      anti_role_rename: 0, anti_dangerous_role: 0, anti_channel_create: 0,
+      anti_channel_delete: 0, anti_channel_rename: 0, anti_server_rename: 0,
+      anti_server_icon: 0, anti_bot_add: 0 }
+  );
 
-  const toggle = k => setProtections(p => ({ ...p, [k]: !p[k] }));
+  const dmOnPunishment = !!config.dm_on_punishment;
+  const setDmOnPunishment = v => setConfig(prev => ({ ...prev, dm_on_punishment: v ? 1 : 0 }));
+
+  const [activeTab, setActiveTab] = useState("General Protection");
+
+  const protections = {
+    antiBan:     !!config.anti_ban,
+    antiKick:    !!config.anti_kick,
+    antiRole:    !!config.anti_role,
+    antiChannel: !!config.anti_channel,
+    antiWebhook: !!config.anti_webhook,
+  };
+
+  const dbKey = { antiBan:"anti_ban", antiKick:"anti_kick", antiRole:"anti_role",
+                  antiChannel:"anti_channel", antiWebhook:"anti_webhook" };
+  const toggle = k => setConfig(prev => ({ ...prev, [dbKey[k]]: prev[dbKey[k]] ? 0 : 1 }));
 
   return (
     <div>
@@ -1130,6 +1260,32 @@ function Protection() {
           </div>
         ))}
       </div>
+      <Toast toast={toast} />
+      {unsaved && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 240, right: 0,
+          background: "#1A1C26", border: `1px solid ${C.border}`,
+          padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          zIndex: 50,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.premium }}>
+            <span>⚠</span> You have unsaved changes
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setUnsaved(false)} style={{
+              background: "transparent", border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: "8px 20px", color: C.gray1,
+              fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+            }}>Cancel</button>
+            <button onClick={save} disabled={saving} style={{
+              background: C.accent, border: "none",
+              borderRadius: 8, padding: "8px 20px", color: C.white,
+              fontSize: 13, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit",
+              opacity: saving ? 0.7 : 1,
+            }}>{saving ? "Saving…" : "Save Changes"}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1139,14 +1295,22 @@ function Protection() {
 // PAGE: WELCOMER
 // ─────────────────────────────────────────────────────────────────────────────
 function Welcomer() {
+  const { config, setConfig, unsaved, setUnsaved, save, saving, toast } = useApiConfig(
+    "/api/welcomer", "/api/welcomer",
+    { welcome_enabled: 1, welcome_img_enabled: 1, welcome_channel_id: null,
+      goodbye_enabled: 0, goodbye_channel_id: null, greet_enabled: 0 }
+  );
+
   const [mainTab, setMainTab] = useState("Welcome");
   const [subTab, setSubTab] = useState("Settings");
   const [imgTab, setImgTab] = useState("Background");
-  const [enableMsg, setEnableMsg] = useState(true);
-  const [enableImg, setEnableImg] = useState(true);
-  const [width, setWidth] = useState(449);
+  const [width, setWidth]   = useState(449);
   const [height, setHeight] = useState(71);
-  const [unsaved, setUnsaved] = useState(false);
+
+  const enableMsg = !!config.welcome_enabled;
+  const enableImg = !!config.welcome_img_enabled;
+  const setEnableMsg = v => setConfig(prev => ({ ...prev, welcome_enabled: v ? 1 : 0 }));
+  const setEnableImg = v => setConfig(prev => ({ ...prev, welcome_img_enabled: v ? 1 : 0 }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -1354,6 +1518,7 @@ function Welcomer() {
       )}
 
       {/* Save bar */}
+      <Toast toast={toast} />
       {unsaved && (
         <div style={{
           position: "fixed", bottom: 0, left: 240, right: 0,
@@ -1370,27 +1535,37 @@ function Welcomer() {
               borderRadius: 8, padding: "8px 20px", color: C.gray1,
               fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
             }}>Cancel</button>
-            <button onClick={() => setUnsaved(false)} style={{
+            <button onClick={save} disabled={saving} style={{
               background: C.accent, border: "none",
               borderRadius: 8, padding: "8px 20px", color: C.white,
-              fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-            }}>Save Changes</button>
+              fontSize: 13, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit",
+              opacity: saving ? 0.7 : 1,
+            }}>{saving ? "Saving…" : "Save Changes"}</button>
           </div>
         </div>
       )}
     </div>
   );
 }
-
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE: LEVELING
 // ─────────────────────────────────────────────────────────────────────────────
 function Leveling() {
+  const { config, setConfig, unsaved, setUnsaved, save, saving, toast } = useApiConfig(
+    "/api/leveling", "/api/leveling",
+    { enabled: 1, min_xp: 15, max_xp: 25, cooldown_sec: 60,
+      xp_type: "text", stack_roles: 0, channel_levelup_msg: 1,
+      enable_lvl_msg: 1, msg_type: "Embed" }
+  );
+
   const [tab, setTab] = useState("Main Settings");
-  const [enableLvlMsg, setEnableLvlMsg] = useState(true);
-  const [msgType, setMsgType] = useState("Embed");
-  const [channelLvlMsg, setChannelLvlMsg] = useState(true);
-  const [unsaved, setUnsaved] = useState(false);
+  const enableLvlMsg  = !!config.enable_lvl_msg;
+  const msgType       = config.msg_type || "Embed";
+  const channelLvlMsg = !!config.channel_levelup_msg;
+  const setEnableLvlMsg  = v => setConfig(prev => ({ ...prev, enable_lvl_msg: v ? 1 : 0 }));
+  const setMsgType       = v => setConfig(prev => ({ ...prev, msg_type: v }));
+  const setChannelLvlMsg = v => setConfig(prev => ({ ...prev, channel_levelup_msg: v ? 1 : 0 }));
 
   const EmbedBuilder = ({ title }) => (
     <div style={{ marginBottom: 20 }}>
@@ -1620,6 +1795,7 @@ function Leveling() {
       )}
 
       {/* Unsaved changes bar */}
+      <Toast toast={toast} />
       {unsaved && (
         <div style={{
           position: "fixed", bottom: 0, left: 240, right: 0,
@@ -1636,11 +1812,12 @@ function Leveling() {
               borderRadius: 8, padding: "8px 20px", color: C.gray1,
               fontSize: 13, cursor: "pointer", fontFamily: "inherit",
             }}>Cancel</button>
-            <button onClick={() => setUnsaved(false)} style={{
+            <button onClick={save} disabled={saving} style={{
               background: C.accent, border: "none", borderRadius: 8,
               padding: "8px 20px", color: C.white, fontSize: 13,
-              fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-            }}>Save Changes</button>
+              fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit",
+              opacity: saving ? 0.7 : 1,
+            }}>{saving ? "Saving…" : "Save Changes"}</button>
           </div>
         </div>
       )}
@@ -2427,24 +2604,186 @@ function ProtectionFull() {
 // PAGE: MODERATION TOOLS
 // ─────────────────────────────────────────────────────────────────────────────
 function ModerationTools() {
-  const [activeTab, setActiveTab] = useState("Bans");
-  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab]   = useState("Bans");
+  const [search, setSearch]         = useState("");
+  const [records, setRecords]       = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [toast, setToast]           = useState(null);
+
+  // Action form state
+  const [showForm, setShowForm]     = useState(false);
+  const [formAction, setFormAction] = useState("ban");
+  const [formUserId, setFormUserId] = useState("");
+  const [formReason, setFormReason] = useState("");
+  const [formDuration, setFormDuration] = useState(600);
+  const [submitting, setSubmitting] = useState(false);
 
   const tabs = ["Bans", "Mutes", "Timeouts", "Temp Roles"];
 
+  const tabToType = { Bans: "ban", Mutes: "mute", Timeouts: "timeout", "Temp Roles": "temp_role" };
+
+  // Load records from API when tab changes
+  useEffect(() => {
+    setLoading(true);
+    const type = tabToType[activeTab];
+    apiGet(`/api/moderation?guildId=${GUILD_ID}&type=${type}`)
+      .then(data => { setRecords(Array.isArray(data) ? data : []); })
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, [activeTab]);
+
+  // Show toast
+  const showToast = (msg, ok) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // Submit moderation action
+  const submitAction = async () => {
+    if (!formUserId.trim()) return showToast("User ID is required", false);
+    setSubmitting(true);
+    try {
+      await apiPost("/api/moderation", {
+        action: formAction,
+        targetId: formUserId.trim(),
+        reason: formReason || "No reason provided",
+        duration: ["timeout", "mute"].includes(formAction) ? formDuration : undefined,
+      });
+      showToast(`${formAction} queued — bot will execute shortly`, true);
+      setShowForm(false);
+      setFormUserId(""); setFormReason(""); setFormDuration(600);
+      // Refresh records after 2s (bot needs time to execute)
+      setTimeout(() => {
+        const type = tabToType[activeTab];
+        apiGet(`/api/moderation?guildId=${GUILD_ID}&type=${type}`)
+          .then(data => setRecords(Array.isArray(data) ? data : []));
+      }, 2000);
+    } catch (err) {
+      showToast(`Error: ${err.message}`, false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Remove a moderation record
+  const removeRecord = async (id) => {
+    try {
+      await fetch(`${API_BASE}/api/moderation/${id}`, { method: "DELETE" });
+      setRecords(prev => prev.filter(r => r.id !== id));
+      showToast("Record removed", true);
+    } catch (err) {
+      showToast("Failed to remove", false);
+    }
+  };
+
+  const filtered = records.filter(r =>
+    !search || r.username?.toLowerCase().includes(search.toLowerCase()) || r.user_id?.includes(search)
+  );
+
   const columns = {
-    Bans:      ["USER", "REASON", "EXPIRES", "ACTIONS"],
-    Mutes:     ["USER", "TYPE", "REASON", "EXPIRES", "ACTIONS"],
-    Timeouts:  ["USER", "REASON", "EXPIRES", "ACTIONS"],
-    "Temp Roles": ["USER", "ROLE", "REASON", "EXPIRES", "ACTIONS"],
+    Bans:         ["USER", "REASON", "EXPIRES", "ACTIONS"],
+    Mutes:        ["USER", "REASON", "EXPIRES", "ACTIONS"],
+    Timeouts:     ["USER", "REASON", "EXPIRES", "ACTIONS"],
+    "Temp Roles": ["USER", "REASON", "EXPIRES", "ACTIONS"],
+  };
+
+  const actionOptions = {
+    Bans:         ["ban", "unban"],
+    Mutes:        ["mute", "unmute"],
+    Timeouts:     ["timeout", "untimeout"],
+    "Temp Roles": ["timeout"],
   };
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 18, fontWeight: 600, color: C.white, marginBottom: 4 }}>Moderation Tools</div>
-        <div style={{ fontSize: 13, color: C.gray3 }}>Manage bans, mutes, timeouts, and temporary roles for your server</div>
+      <Toast toast={toast} />
+      <div style={{ marginBottom: 20, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 600, color: C.white, marginBottom: 4 }}>Moderation Tools</div>
+          <div style={{ fontSize: 13, color: C.gray3 }}>Manage bans, mutes, timeouts, and temporary roles for your server</div>
+        </div>
+        <button onClick={() => { setFormAction(tabToType[activeTab]); setShowForm(true); }} style={{
+          background: C.accent, border: "none", borderRadius: 9, padding: "9px 18px",
+          color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+        }}>+ New Action</button>
       </div>
+
+      {/* Action Form */}
+      {showForm && (
+        <div style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
+          padding: 20, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.white, marginBottom: 14 }}>Execute Moderation Action</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Action</div>
+              <select value={formAction} onChange={e => setFormAction(e.target.value)} style={{
+                width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+                borderRadius: 8, padding: "9px 12px", color: C.gray1, fontSize: 13,
+                fontFamily: "inherit", outline: "none",
+              }}>
+                {actionOptions[activeTab].map(a => (
+                  <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>User ID</div>
+              <input
+                value={formUserId}
+                onChange={e => setFormUserId(e.target.value)}
+                placeholder="Discord User ID..."
+                style={{
+                  width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+                  borderRadius: 8, padding: "9px 12px", color: C.gray1, fontSize: 13,
+                  fontFamily: "inherit", outline: "none",
+                }}
+              />
+            </div>
+            {["timeout", "mute"].includes(formAction) && (
+              <div>
+                <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Duration (seconds)</div>
+                <input
+                  type="number" min={10} max={2419200}
+                  value={formDuration}
+                  onChange={e => setFormDuration(Number(e.target.value))}
+                  style={{
+                    width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+                    borderRadius: 8, padding: "9px 12px", color: C.gray1, fontSize: 13,
+                    fontFamily: "inherit", outline: "none",
+                  }}
+                />
+              </div>
+            )}
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Reason</div>
+            <input
+              value={formReason}
+              onChange={e => setFormReason(e.target.value)}
+              placeholder="Reason for this action..."
+              style={{
+                width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+                borderRadius: 8, padding: "9px 12px", color: C.gray1, fontSize: 13,
+                fontFamily: "inherit", outline: "none",
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowForm(false)} style={{
+              background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8,
+              padding: "8px 18px", color: C.gray1, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+            }}>Cancel</button>
+            <button onClick={submitAction} disabled={submitting} style={{
+              background: C.red, border: "none", borderRadius: 8,
+              padding: "8px 18px", color: C.white, fontSize: 13,
+              fontWeight: 600, cursor: submitting ? "wait" : "pointer", fontFamily: "inherit",
+              opacity: submitting ? 0.7 : 1,
+            }}>{submitting ? "Sending…" : "Execute"}</button>
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div style={{
@@ -2482,21 +2821,50 @@ function ModerationTools() {
       <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
         {/* Header */}
         <div style={{
-          display: "grid",
-          gridTemplateColumns: activeTab === "Mutes" ? "2fr 1fr 2fr 1fr 1fr" : activeTab === "Temp Roles" ? "2fr 1fr 2fr 1fr 1fr" : "2fr 2fr 1fr 1fr",
-          padding: "12px 20px",
-          borderBottom: `1px solid ${C.border}`,
-          gap: 12,
+          display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr",
+          padding: "12px 20px", borderBottom: `1px solid ${C.border}`, gap: 12,
         }}>
           {columns[activeTab].map(col => (
             <div key={col} style={{ fontSize: 11, fontWeight: 700, color: C.gray4, letterSpacing: "0.5px" }}>{col}</div>
           ))}
         </div>
 
-        {/* Empty state */}
-        <div style={{ padding: "48px 20px", textAlign: "center", color: C.gray3, fontSize: 13 }}>
-          No moderation actions found
-        </div>
+        {/* Rows */}
+        {loading ? (
+          <div style={{ padding: "48px 20px", textAlign: "center", color: C.gray3, fontSize: 13 }}>
+            Loading…
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: "48px 20px", textAlign: "center", color: C.gray3, fontSize: 13 }}>
+            No moderation actions found
+          </div>
+        ) : (
+          filtered.map(r => (
+            <div key={r.id} style={{
+              display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr",
+              padding: "14px 20px", borderBottom: `1px solid ${C.border}`,
+              gap: 12, alignItems: "center",
+            }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.white }}>{r.username || "Unknown"}</div>
+                <div style={{ fontSize: 11, color: C.gray4 }}>{r.user_id}</div>
+              </div>
+              <div style={{ fontSize: 13, color: C.gray2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.reason || "No reason"}
+              </div>
+              <div style={{ fontSize: 12, color: C.gray3 }}>
+                {r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "Permanent"}
+              </div>
+              <div>
+                <button onClick={() => removeRecord(r.id)} style={{
+                  background: "transparent", border: `1px solid ${C.red}`,
+                  borderRadius: 7, padding: "5px 12px", color: C.red,
+                  fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+                }}>Remove</button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
