@@ -26,17 +26,33 @@ async function fetchServerData() {
   const latest = stats?.latest || {};
   return {
     ...server,
+
+    // ── Identity ─────────────────────────────────────────────────────────────
+    serverId:   server.serverId   || SERVER_ID,
+    serverName: server.serverName || SERVER_NAME,
+    serverIcon: server.serverIcon || null,
+
+    // ── Full server structure (populated by bot sync every 60s) ──────────────
+    guild:          server.guild          || null,
+    channels:       Array.isArray(server.channels)       ? server.channels       : [],
+    categories:     Array.isArray(server.categories)     ? server.categories     : [],
+    voice_channels: Array.isArray(server.voice_channels) ? server.voice_channels : [],
+    roles:          Array.isArray(server.roles)          ? server.roles          : [],
+    members:        Array.isArray(server.members)        ? server.members        : [],
+    lastSync:       server.lastSync || null,
+
+    // ── Stats (from guild_stats time-series table) ────────────────────────────
     stats: {
       members:           latest.member_count  ?? server?.stats?.members      ?? 0,
       messages:          latest.message_count ?? server?.stats?.messages     ?? 0,
       interactions:      server?.stats?.interactions ?? 0,
       joins:             server?.stats?.joins        ?? 0,
       leaves:            server?.stats?.leaves       ?? 0,
-      voiceUsers:        latest.voice_users   ?? 0,
-      onlineCount:       latest.online_count  ?? 0,
-      boostCount:        latest.boost_count   ?? 0,
-      roleCount:         latest.role_count    ?? 0,
-      channelCount:      latest.channel_count ?? 0,
+      voiceUsers:        latest.voice_users   ?? server?.stats?.voiceUsers   ?? 0,
+      onlineCount:       latest.online_count  ?? server?.stats?.onlineCount  ?? 0,
+      boostCount:        latest.boost_count   ?? server?.stats?.boostCount   ?? 0,
+      roleCount:         latest.role_count    ?? server?.stats?.roleCount    ?? 0,
+      channelCount:      latest.channel_count ?? server?.stats?.channelCount ?? 0,
       membersChange:     server?.stats?.membersChange      ?? null,
       messagesChange:    server?.stats?.messagesChange     ?? null,
       interactionsChange:server?.stats?.interactionsChange ?? null,
@@ -110,6 +126,15 @@ const DEFAULT_SERVER_DATA = {
   mutes:      [],                 // { userId, username, type, reason, expires }[]
   timeouts:   [],                 // { userId, username, reason, expires }[]
   tempRoles:  [],                 // { userId, username, role, reason, expires }[]
+
+  // ── Full Server Structure (from /api/server — populated by bot sync) ──────
+  guild:          null,           // { id, name, icon, memberCount, boostCount, ... }
+  channels:       [],             // { id, name, type, parent_id, position, topic }[]
+  categories:     [],             // { id, name, position }[]
+  voice_channels: [],             // { id, name, bitrate, user_limit, parent_id, users }[]
+  roles:          [],             // { id, name, color, position, hoist, permissions }[]
+  members:        [],             // { id, username, display, avatar, roles[], joinedAt }[]
+  lastSync:       null,           // ISO string — when bot last synced
 };
 
 // Context
@@ -182,6 +207,92 @@ function Toast({ toast }) {
     }}>
       {toast.ok ? "✅" : "❌"} {toast.msg}
     </div>
+  );
+}
+
+// ── SHARED SELECT COMPONENTS ─────────────────────────────────────────────────
+// These read from ServerDataContext and render real Discord server data.
+// Same visual style as the rest of the dashboard — no design changes.
+
+const selectStyle = {
+  width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+  borderRadius: 8, padding: "10px 14px", color: C.gray1, fontSize: 13,
+  fontFamily: "inherit", outline: "none", cursor: "pointer",
+};
+
+// Text channels only (excludes voice, category, threads)
+function ChannelSelect({ value, onChange, placeholder = "Select a channel...", style: extraStyle }) {
+  const d = useServerData();
+  const textChannels = (d.channels || []).filter(
+    ch => ch.type === "GUILD_TEXT" || ch.type === "GUILD_ANNOUNCEMENT"
+  );
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle, ...extraStyle }}
+    >
+      <option value="">{textChannels.length ? placeholder : "Loading channels..."}</option>
+      {textChannels.map(ch => (
+        <option key={ch.id} value={ch.id}>#{ch.name}</option>
+      ))}
+    </select>
+  );
+}
+
+// All roles (from bot sync)
+function RoleSelect({ value, onChange, placeholder = "Select a role...", style: extraStyle }) {
+  const d = useServerData();
+  const roles = d.roles || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle, ...extraStyle }}
+    >
+      <option value="">{roles.length ? placeholder : "Loading roles..."}</option>
+      {roles.map(r => (
+        <option key={r.id} value={r.id} style={{ color: r.color !== "#000000" ? r.color : C.gray1 }}>
+          {r.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// Categories only
+function CategorySelect({ value, onChange, placeholder = "Select a category...", style: extraStyle }) {
+  const d = useServerData();
+  const categories = d.categories || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle, ...extraStyle }}
+    >
+      <option value="">{categories.length ? placeholder : "Loading categories..."}</option>
+      {categories.map(cat => (
+        <option key={cat.id} value={cat.id}>{cat.name}</option>
+      ))}
+    </select>
+  );
+}
+
+// Voice channels only
+function VoiceChannelSelect({ value, onChange, placeholder = "Select a voice channel...", style: extraStyle }) {
+  const d = useServerData();
+  const voiceChannels = d.voice_channels || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle, ...extraStyle }}
+    >
+      <option value="">{voiceChannels.length ? placeholder : "Loading voice channels..."}</option>
+      {voiceChannels.map(ch => (
+        <option key={ch.id} value={ch.id}>🔊 {ch.name}{ch.users > 0 ? ` (${ch.users} online)` : ""}</option>
+      ))}
+    </select>
   );
 }
 
@@ -325,8 +436,24 @@ function Overview() {
     { label: "Leaves",       value: d.stats.leaves       || 0, change: d.stats.leavesChange,       icon: "📤" },
   ];
 
-  const topMembers = d.topMembers.length ? d.topMembers : [];
-  const topChannels = d.topChannels.length ? d.topChannels : [];
+  // Real members from bot sync — shown as ranked list
+  const topMembers = d.topMembers.length
+    ? d.topMembers
+    : (d.members || []).slice(0, 5).map((m, i) => ({
+        rank: i + 1,
+        name: m.display || m.username,
+        icon: m.avatar ? null : "👤",
+        avatar: m.avatar || null,
+        msgs: "—",
+      }));
+
+  // Real channels from bot sync — shown as ranked list
+  const topChannels = d.topChannels.length
+    ? d.topChannels
+    : (d.channels || [])
+        .filter(ch => ch.type === "GUILD_TEXT" || ch.type === "GUILD_ANNOUNCEMENT")
+        .slice(0, 5)
+        .map((ch, i) => ({ rank: i + 1, name: ch.name, msgs: "—" }));
 
   const [activeTab, setActiveTab] = useState("Messages");
   const [activeActivityTab, setActiveActivityTab] = useState("Top Channels");
@@ -505,8 +632,12 @@ function Overview() {
               <div style={{
                 width: 34, height: 34, borderRadius: "50%", background: C.cardHover,
                 display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16,
-                border: `1px solid ${C.border}`,
-              }}>{m.icon}</div>
+                border: `1px solid ${C.border}`, overflow: "hidden", flexShrink: 0,
+              }}>
+                {m.avatar
+                  ? <img src={m.avatar} alt={m.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  : (m.icon || "👤")}
+              </div>
               <span style={{ flex: 1, fontSize: 13, color: C.gray1 }}>{m.name}</span>
               <span style={{ fontSize: 12, color: C.gray3 }}><b style={{ color: C.white }}>{m.msgs}</b> Messages</span>
             </div>
@@ -804,45 +935,21 @@ function Commands() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div>
               <div style={{ fontSize: 12, fontWeight: 500, color: C.gray2, marginBottom: 8 }}>Disabled Roles</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: 13, color: C.gray4 }}>Select roles to disable</span>
-                <span style={{ color: C.gray4 }}>▼</span>
-              </div>
+              <RoleSelect placeholder="Select roles to disable" />
             </div>
             <div>
               <div style={{ fontSize: 12, fontWeight: 500, color: C.gray2, marginBottom: 8 }}>Enabled Roles</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: 13, color: C.gray4 }}>Select roles to enable</span>
-                <span style={{ color: C.gray4 }}>▼</span>
-              </div>
+              <RoleSelect placeholder="Select roles to enable" />
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div>
               <div style={{ fontSize: 12, fontWeight: 500, color: C.gray2, marginBottom: 8 }}>Disabled Channels</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: 13, color: C.gray4 }}>Select channels to disable</span>
-                <span style={{ color: C.gray4 }}>▼</span>
-              </div>
+              <ChannelSelect placeholder="Select channels to disable" />
             </div>
             <div>
               <div style={{ fontSize: 12, fontWeight: 500, color: C.gray2, marginBottom: 8 }}>Enabled Channels</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: 13, color: C.gray4 }}>Select channels to enable</span>
-                <span style={{ color: C.gray4 }}>▼</span>
-              </div>
+              <ChannelSelect placeholder="Select channels to enable" />
             </div>
           </div>
         </div>
@@ -1069,13 +1176,7 @@ function AutoModeration() {
           ))}
         </div>
         <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Allowed Roles</div>
-        <select style={{
-          width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
-          borderRadius: 8, padding: "10px 14px", color: C.gray3, fontSize: 13,
-          fontFamily: "inherit", outline: "none", marginBottom: 12,
-        }}>
-          <option value="">Select roles to bypass this restriction...</option>
-        </select>
+        <RoleSelect placeholder="Select roles to bypass this restriction..." style={{ marginBottom: 12 }} />
         <div style={{ fontSize: 11, color: C.gray4, marginBottom: 10 }}>Users with these roles will bypass the restriction in the selected channels.</div>
         <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Blocked Prefixes</div>
         <select style={{
@@ -1162,19 +1263,11 @@ function Protection() {
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: C.gray1, marginBottom: 4 }}>Log Channel</div>
           <div style={{ fontSize: 12, color: C.gray3, marginBottom: 8 }}>Channel to send protection alerts</div>
-          <div style={{
-            background: C.cardHover, border: `1px solid ${C.border}`,
-            borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: C.gray4 }}>#</span>
-              <span style={{ fontSize: 13, color: C.gray1 }}>—</span>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <span style={{ color: C.gray4, cursor: "pointer" }}>✕</span>
-              <span style={{ color: C.gray4 }}>▼</span>
-            </div>
-          </div>
+          <ChannelSelect
+            value={config.log_channel_id}
+            onChange={v => setConfig(prev => ({ ...prev, log_channel_id: v }))}
+            placeholder="Select a channel..."
+          />
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1211,13 +1304,7 @@ function Protection() {
           </div>
           <div>
             <div style={{ fontSize: 12, fontWeight: 500, color: C.gray2, marginBottom: 6 }}>Whitelisted Roles ℹ</div>
-            <div style={{
-              background: C.cardHover, border: `1px solid ${C.border}`,
-              borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-            }}>
-              <span style={{ fontSize: 12, color: C.gray4 }}>Select roles</span>
-              <span style={{ color: C.gray4 }}>▼</span>
-            </div>
+            <RoleSelect placeholder="Select roles" />
           </div>
         </div>
       </div>
@@ -1351,20 +1438,11 @@ function Welcomer() {
           {/* Channel */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: C.gray2, marginBottom: 8 }}>Channel</div>
-            <div style={{
-              background: C.cardHover, border: `1px solid ${C.border}`,
-              borderRadius: 8, padding: "10px 14px",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ color: C.gray4 }}>#</span>
-                <span style={{ fontSize: 20 }}>▶</span>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <span style={{ color: C.gray4, cursor: "pointer" }}>✕</span>
-                <span style={{ color: C.gray4 }}>▼</span>
-              </div>
-            </div>
+            <ChannelSelect
+              value={config.welcome_channel_id}
+              onChange={v => setConfig(prev => ({ ...prev, welcome_channel_id: v }))}
+              placeholder="Select a channel..."
+            />
           </div>
 
           {/* Enable Welcome Message */}
@@ -1724,20 +1802,11 @@ function Leveling() {
             {/* Channel selector */}
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Level Up Announcement Channel</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`,
-                borderRadius: 8, padding: "10px 14px",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ color: C.gray4 }}>#</span>
-                  <span style={{ fontSize: 13, color: C.gray1 }}>—</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span style={{ color: C.gray4, cursor: "pointer" }}>✕</span>
-                  <span style={{ color: C.gray4 }}>▼</span>
-                </div>
-              </div>
+              <ChannelSelect
+                value={config.announcement_channel}
+                onChange={v => setConfig(prev => ({ ...prev, announcement_channel: v }))}
+                placeholder="Select a channel..."
+              />
             </div>
 
             {/* Channel Level-Up Message */}
@@ -1829,6 +1898,7 @@ function Leveling() {
 // PAGE: TEMP VOICE
 // ─────────────────────────────────────────────────────────────────────────────
 function TempVoice() {
+  const d = useServerData();
   const [tab, setTab] = useState("Channels");
   const [view, setView] = useState("list"); // "list" | "create"
   const [ownerOnly, setOwnerOnly] = useState(false);
@@ -1911,19 +1981,7 @@ function TempVoice() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Temporary Channels Category</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`,
-                borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 12 }}>📁</span>
-                  <span style={{ fontSize: 13, color: C.gray1 }}>[Category]</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span style={{ color: C.gray4, cursor: "pointer" }}>✕</span>
-                  <span style={{ color: C.gray4 }}>▼</span>
-                </div>
-              </div>
+              <CategorySelect placeholder="[Category]" />
             </div>
             <div>
               <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>New Channels Position</div>
@@ -1949,9 +2007,7 @@ function TempVoice() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
             <div>
               <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Temporary Channel Allowed Roles</div>
-              <select style={{ width: "100%", background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", color: C.gray3, fontSize: 13, fontFamily: "inherit", outline: "none" }}>
-                <option>Select roles...</option>
-              </select>
+              <RoleSelect placeholder="Select roles..." />
             </div>
             <div>
               <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Temporary Channel Privacy Mode</div>
@@ -2012,9 +2068,7 @@ function TempVoice() {
           </div>
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 12, color: C.gray3, marginBottom: 6 }}>Temporary Voice Role</div>
-            <select style={{ width: "100%", background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", color: C.gray3, fontSize: 13, fontFamily: "inherit", outline: "none" }}>
-              <option>Select a role...</option>
-            </select>
+            <RoleSelect placeholder="Select a role..." />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
             <div>
@@ -2061,7 +2115,9 @@ function TempVoice() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: C.white }}>Temporary Voice Channels</div>
-              <div style={{ fontSize: 12, color: C.gray3, marginTop: 2 }}>1 channel configured</div>
+              <div style={{ fontSize: 12, color: C.gray3, marginTop: 2 }}>
+                {(d.voice_channels || []).length} voice channel{(d.voice_channels || []).length !== 1 ? "s" : ""} in server
+              </div>
             </div>
             <button onClick={() => setView("create")} style={{
               background: C.accent, border: "none", borderRadius: 8,
@@ -2075,30 +2131,35 @@ function TempVoice() {
               display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto",
               padding: "10px 0", borderBottom: `1px solid ${C.border}`,
             }}>
-              {["CHANNEL NAME", "CATEGORY", "CREATED AT", "ACTIONS"].map(h => (
+              {["CHANNEL NAME", "CATEGORY", "USERS", "ACTIONS"].map(h => (
                 <div key={h} style={{ fontSize: 11, fontWeight: 700, color: C.gray4, letterSpacing: "0.5px" }}>{h}</div>
               ))}
             </div>
-            {/* Table row */}
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto",
-              padding: "14px 0", alignItems: "center",
-              borderBottom: `1px solid ${C.border}`,
-            }}>
-              <span style={{ fontSize: 13, color: C.white }}>Create</span>
-              <span style={{ fontSize: 13, color: C.gray2 }}>[Category]</span>
-              <span style={{ fontSize: 13, color: C.gray2 }}>—</span>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setView("create")} style={{
-                  background: "transparent", border: "none", color: C.accent,
-                  fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-                }}>Manage</button>
-                <button style={{
-                  background: "transparent", border: "none", color: C.red,
-                  fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-                }}>Delete</button>
+            {/* Real voice channels from bot sync */}
+            {(d.voice_channels || []).length === 0 ? (
+              <div style={{ padding: "32px 0", textAlign: "center", color: C.gray3, fontSize: 13 }}>
+                No voice channels found — bot sync may still be loading
               </div>
-            </div>
+            ) : (d.voice_channels || []).map(ch => {
+              const cat = (d.categories || []).find(c => c.id === ch.parent_id);
+              return (
+                <div key={ch.id} style={{
+                  display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto",
+                  padding: "14px 0", alignItems: "center",
+                  borderBottom: `1px solid ${C.border}`,
+                }}>
+                  <span style={{ fontSize: 13, color: C.white }}>🔊 {ch.name}</span>
+                  <span style={{ fontSize: 13, color: C.gray2 }}>{cat?.name || "—"}</span>
+                  <span style={{ fontSize: 13, color: C.gray2 }}>{ch.users > 0 ? `${ch.users} online` : "—"}</span>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button onClick={() => setView("create")} style={{
+                      background: "transparent", border: "none", color: C.accent,
+                      fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                    }}>Manage</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2162,21 +2223,7 @@ function TempVoice() {
             {/* Send Interface */}
             <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, padding: "20px" }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: C.white, marginBottom: 16 }}>Send Interface</div>
-              <div style={{
-                background: C.cardHover, border: `1px solid ${C.border}`,
-                borderRadius: 8, padding: "10px 14px",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                marginBottom: 12,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ color: C.gray4 }}>#</span>
-                  <span style={{ fontSize: 13, color: C.gray1 }}>—</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span style={{ color: C.gray4, cursor: "pointer" }}>✕</span>
-                  <span style={{ color: C.gray4 }}>▼</span>
-                </div>
-              </div>
+              <ChannelSelect placeholder="Select a channel..." style={{ marginBottom: 12 }} />
               <button style={{
                 width: "100%", background: C.accent, border: "none",
                 borderRadius: 8, padding: "10px", color: C.white,
@@ -3308,10 +3355,19 @@ export default function SISControlPanel() {
             width: 34, height: 34, borderRadius: 8, overflow: "hidden",
             background: C.cardHover, border: `1px solid ${C.border}`,
             display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16,
-          }}>🖼</div>
+            flexShrink: 0,
+          }}>
+            {serverData.guild?.icon
+              ? <img src={serverData.guild.icon} alt="icon" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : "🖼"}
+          </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.white }}>{SERVER_NAME}</div>
-            <div style={{ fontSize: 11, color: C.gray3, marginTop: 1 }}>Control Panel</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.white }}>
+              {serverData.guild?.name || serverData.serverName || SERVER_NAME}
+            </div>
+            <div style={{ fontSize: 11, color: C.gray3, marginTop: 1 }}>
+              {serverData.stats?.members > 0 ? `${serverData.stats.members} members` : "Control Panel"}
+            </div>
           </div>
         </div>
 
