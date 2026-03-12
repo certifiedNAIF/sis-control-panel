@@ -211,91 +211,6 @@ function Toast({ toast }) {
 }
 
 // ── SHARED SELECT COMPONENTS ─────────────────────────────────────────────────
-// These read from ServerDataContext and render real Discord server data.
-// Same visual style as the rest of the dashboard — no design changes.
-
-const selectStyle = {
-  width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
-  borderRadius: 8, padding: "10px 14px", color: C.gray1, fontSize: 13,
-  fontFamily: "inherit", outline: "none", cursor: "pointer",
-};
-
-// Text channels only (excludes voice, category, threads)
-function ChannelSelect({ value, onChange, placeholder = "Select a channel...", style: extraStyle }) {
-  const d = useServerData();
-  const textChannels = (d.channels || []).filter(
-    ch => ch.type === "GUILD_TEXT" || ch.type === "GUILD_ANNOUNCEMENT"
-  );
-  return (
-    <select
-      value={value || ""}
-      onChange={e => onChange && onChange(e.target.value)}
-      style={{ ...selectStyle, ...extraStyle }}
-    >
-      <option value="">{textChannels.length ? placeholder : "Loading channels..."}</option>
-      {textChannels.map(ch => (
-        <option key={ch.id} value={ch.id}>#{ch.name}</option>
-      ))}
-    </select>
-  );
-}
-
-// All roles (from bot sync)
-function RoleSelect({ value, onChange, placeholder = "Select a role...", style: extraStyle }) {
-  const d = useServerData();
-  const roles = d.roles || [];
-  return (
-    <select
-      value={value || ""}
-      onChange={e => onChange && onChange(e.target.value)}
-      style={{ ...selectStyle, ...extraStyle }}
-    >
-      <option value="">{roles.length ? placeholder : "Loading roles..."}</option>
-      {roles.map(r => (
-        <option key={r.id} value={r.id} style={{ color: r.color !== "#000000" ? r.color : C.gray1 }}>
-          {r.name}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-// Categories only
-function CategorySelect({ value, onChange, placeholder = "Select a category...", style: extraStyle }) {
-  const d = useServerData();
-  const categories = d.categories || [];
-  return (
-    <select
-      value={value || ""}
-      onChange={e => onChange && onChange(e.target.value)}
-      style={{ ...selectStyle, ...extraStyle }}
-    >
-      <option value="">{categories.length ? placeholder : "Loading categories..."}</option>
-      {categories.map(cat => (
-        <option key={cat.id} value={cat.id}>{cat.name}</option>
-      ))}
-    </select>
-  );
-}
-
-// Voice channels only
-function VoiceChannelSelect({ value, onChange, placeholder = "Select a voice channel...", style: extraStyle }) {
-  const d = useServerData();
-  const voiceChannels = d.voice_channels || [];
-  return (
-    <select
-      value={value || ""}
-      onChange={e => onChange && onChange(e.target.value)}
-      style={{ ...selectStyle, ...extraStyle }}
-    >
-      <option value="">{voiceChannels.length ? placeholder : "Loading voice channels..."}</option>
-      {voiceChannels.map(ch => (
-        <option key={ch.id} value={ch.id}>🔊 {ch.name}{ch.users > 0 ? ` (${ch.users} online)` : ""}</option>
-      ))}
-    </select>
-  );
-}
-
 // ── EXACT colors from screenshots ──────────────────────────────────────────
 const C = {
   bg: "#0D0F13",
@@ -345,6 +260,92 @@ function Toggle({ on, onChange }) {
         boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
       }} />
     </div>
+  );
+}
+
+// ── SHARED SELECT COMPONENTS ─────────────────────────────────────────────────
+// Read from ServerDataContext — renders real Discord server data.
+// Defined here so const C is already initialized.
+
+const selectStyle = () => ({
+  width: "100%", background: C.cardHover, border: `1px solid ${C.border}`,
+  borderRadius: 8, padding: "10px 14px", color: C.gray1, fontSize: 13,
+  fontFamily: "inherit", outline: "none", cursor: "pointer",
+});
+
+// Text channels only (GUILD_TEXT + GUILD_ANNOUNCEMENT)
+function ChannelSelect({ value, onChange, placeholder = "Select a channel...", style: extraStyle }) {
+  const d = useServerData();
+  const textChannels = (d.channels || []).filter(
+    ch => ch.type === "GUILD_TEXT" || ch.type === "GUILD_ANNOUNCEMENT"
+  );
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle(), ...extraStyle }}
+    >
+      <option value="">{textChannels.length ? placeholder : "Loading channels..."}</option>
+      {textChannels.map(ch => (
+        <option key={ch.id} value={ch.id}>#{ch.name}</option>
+      ))}
+    </select>
+  );
+}
+
+// All roles (from bot sync)
+function RoleSelect({ value, onChange, placeholder = "Select a role...", style: extraStyle }) {
+  const d = useServerData();
+  const roles = d.roles || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle(), ...extraStyle }}
+    >
+      <option value="">{roles.length ? placeholder : "Loading roles..."}</option>
+      {roles.map(r => (
+        <option key={r.id} value={r.id}>
+          {r.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// Categories only
+function CategorySelect({ value, onChange, placeholder = "Select a category...", style: extraStyle }) {
+  const d = useServerData();
+  const categories = d.categories || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle(), ...extraStyle }}
+    >
+      <option value="">{categories.length ? placeholder : "Loading categories..."}</option>
+      {categories.map(cat => (
+        <option key={cat.id} value={cat.id}>{cat.name}</option>
+      ))}
+    </select>
+  );
+}
+
+// Voice channels only
+function VoiceChannelSelect({ value, onChange, placeholder = "Select a voice channel...", style: extraStyle }) {
+  const d = useServerData();
+  const voiceChannels = d.voice_channels || [];
+  return (
+    <select
+      value={value || ""}
+      onChange={e => onChange && onChange(e.target.value)}
+      style={{ ...selectStyle(), ...extraStyle }}
+    >
+      <option value="">{voiceChannels.length ? placeholder : "Loading voice channels..."}</option>
+      {voiceChannels.map(ch => (
+        <option key={ch.id} value={ch.id}>🔊 {ch.name}{ch.users > 0 ? ` (${ch.users} online)` : ""}</option>
+      ))}
+    </select>
   );
 }
 
